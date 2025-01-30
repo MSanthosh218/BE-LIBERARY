@@ -7,17 +7,17 @@ const { Pool } = require("pg");
 
 const app = express();
 const pool = new Pool({
-    user: "postgres", // Replace with your PostgreSQL username
+    user: "postgres", 
     host: "localhost",
-    database: "login", // Replace with your database name
-    password: "san123ss", // Replace with your PostgreSQL password
+    database: "login", 
+    password: "san123ss", 
     port: 5432,
 });
 
 app.use(cors());
 app.use(express.json());
 
-// Register User
+// register
 app.post("/register", async (req, res) => {
     const { username, email, password, role } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -31,27 +31,45 @@ app.post("/register", async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
-
-// Login User
+// login
 app.post("/login", async (req, res) => {
     const { email, password } = req.body;
     try {
-        const user = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-        if (user.rows.length === 0) {
+        const userQuery = await pool.query("SELECT id, username, email, password_hash, role FROM users WHERE email = $1", [email]);
+
+        if (userQuery.rows.length === 0) {
             return res.status(400).json({ error: "User not found" });
         }
-        
-        const validPassword = await bcrypt.compare(password, user.rows[0].password_hash);
+
+        const user = userQuery.rows[0]; // Extract the user object
+
+        const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
             return res.status(400).json({ error: "Invalid credentials" });
         }
-        
-        const token = jwt.sign({ id: user.rows[0].id, role: user.rows[0].role }, process.env.JWT_SECRET || "secretkey", { expiresIn: "1h" });
-        res.json({ token, role: user.rows[0].role });
+
+        const token = jwt.sign(
+            { id: user.id, role: user.role },
+            process.env.JWT_SECRET || "secretkey",
+            { expiresIn: "1h" }
+        );
+
+        res.json({
+            token,
+            user: { 
+                id: user.id, 
+                username: user.username, 
+                email: user.email, 
+                role: user.role 
+            }
+        });
     } catch (err) {
-        res.status(400).json({ error: err.message });
+        res.status(500).json({ error: err.message });
     }
 });
+
+
+
 
 // // CRUD Operations for Books
 // app.post("/books", async (req, res) => {
@@ -129,7 +147,7 @@ app.get("/users/:id", async (req, res) => {
 });
 
 
-// CRUD Operations for Books
+// book operations
 app.post("/books", async (req, res) => {
     const { title, author, genre, quantity, price } = req.body;
     try {

@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 const express = require("express");
 const bcrypt = require("bcryptjs");
@@ -6,21 +7,35 @@ const cors = require("cors");
 const { Pool } = require("pg");
 
 const app = express();
+
 const pool = new Pool({
-    user: "postgres", 
-    host: "localhost",
-    database: "login", 
-    password: "san123ss", 
-    port: 5432,
+    user: process.env.DB_USER || "postgres",
+    host: process.env.DB_HOST || "localhost",
+    database: process.env.DB_NAME || "login",
+    password: process.env.DB_PASSWORD || "san123ss",
+    port: process.env.DB_PORT || 5432,
 });
 
 app.use(cors());
 app.use(express.json());
 
-// register
+// Authentication Middleware
+function authenticateToken(req, res, next) {
+    const token = req.header("Authorization")?.split(" ")[1]; // Assuming "Bearer <token>"
+    if (!token) return res.status(401).json({ error: "Access Denied" });
+
+    jwt.verify(token, process.env.JWT_SECRET || "secretkey", (err, user) => {
+        if (err) return res.status(403).json({ error: "Invalid Token" });
+        req.user = user;
+        next();
+    });
+}
+
+// Register Route
 app.post("/register", async (req, res) => {
     const { username, email, password, role } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
+
     try {
         const result = await pool.query(
             "INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING *",
@@ -31,18 +46,21 @@ app.post("/register", async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
-// login
+
+// Login Route
 app.post("/login", async (req, res) => {
     const { email, password } = req.body;
     try {
-        const userQuery = await pool.query("SELECT id, username, email, password_hash, role FROM users WHERE email = $1", [email]);
+        const userQuery = await pool.query(
+            "SELECT id, username, email, password_hash, role FROM users WHERE email = $1",
+            [email]
+        );
 
         if (userQuery.rows.length === 0) {
             return res.status(400).json({ error: "User not found" });
         }
 
-        const user = userQuery.rows[0]; // Extract the user object
-
+        const user = userQuery.rows[0];
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
             return res.status(400).json({ error: "Invalid credentials" });
@@ -56,81 +74,31 @@ app.post("/login", async (req, res) => {
 
         res.json({
             token,
-            user: { 
-                id: user.id, 
-                username: user.username, 
-                email: user.email, 
-                role: user.role 
-            }
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role,
+            },
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-
-
-
-// // CRUD Operations for Books
-// app.post("/books", async (req, res) => {
-//     const { title, author, genre, copies_available } = req.body;
-//     try {
-//         await pool.query(
-//             "INSERT INTO books (title, author, genre, copies_available) VALUES ($1, $2, $3, $4)",
-//             [title, author, genre, copies_available]
-//         );
-//         res.status(201).json({ message: "Book added successfully" });
-//     } catch (err) {
-//         res.status(400).json({ error: err.message });
-//     }
-// });
-
-// app.get("/books", async (req, res) => {
-//     try {
-//         const result = await pool.query("SELECT * FROM books");
-//         res.json(result.rows);
-//     } catch (err) {
-//         res.status(400).json({ error: err.message });
-//     }
-// });
-
-// app.put("/books/:id", async (req, res) => {
-//     const { title, author, genre, copies_available } = req.body;
-//     const { id } = req.params;
-//     try {
-//         await pool.query(
-//             "UPDATE books SET title = $1, author = $2, genre = $3, copies_available = $4 WHERE id = $5",
-//             [title, author, genre, copies_available, id]
-//         );
-//         res.json({ message: "Book updated successfully" });
-//     } catch (err) {
-//         res.status(400).json({ error: err.message });
-//     }
-// });
-
-// app.delete("/books/:id", async (req, res) => {
-//     const { id } = req.params;
-//     try {
-//         await pool.query("DELETE FROM books WHERE id = $1", [id]);
-//         res.json({ message: "Book deleted successfully" });
-//     } catch (err) {
-//         res.status(400).json({ error: err.message });
-//     }
-// });
-app.get("/users" ,async(req , res) => {
-    try{
-        const result = await pool.query(
-                "SELECT * FROM users"
-        )
+// CRUD Operations for Users
+app.get("/users", authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM users");
         res.json(result.rows);
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
 });
 
-app.get("/users/:id", async (req, res) => {
+app.get("/users/:id", authenticateToken, async (req, res) => {
     try {
-        const { id } = req.params; // Get user ID from URL
+        const { id } = req.params;
         const result = await pool.query(
             "SELECT username, email, password_hash, role FROM users WHERE id = $1",
             [id]
@@ -140,16 +108,16 @@ app.get("/users/:id", async (req, res) => {
             return res.status(404).json({ error: "User not found" });
         }
 
-        res.json(result.rows[0]); // Return user data
+        res.json(result.rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-
-// book operations
-app.post("/books", async (req, res) => {
+// CRUD Operations for Books
+app.post("/books", authenticateToken, async (req, res) => {
     const { title, author, genre, quantity, price } = req.body;
+
     try {
         await pool.query(
             "INSERT INTO books (title, author, genre, quantity, price) VALUES ($1, $2, $3, $4, $5)",
@@ -170,9 +138,10 @@ app.get("/books", async (req, res) => {
     }
 });
 
-app.put("/books/:id", async (req, res) => {
+app.put("/books/:id", authenticateToken, async (req, res) => {
     const { title, author, genre, quantity, price } = req.body;
     const { id } = req.params;
+
     try {
         await pool.query(
             "UPDATE books SET title = $1, author = $2, genre = $3, quantity = $4, price = $5 WHERE id = $6",
@@ -184,8 +153,9 @@ app.put("/books/:id", async (req, res) => {
     }
 });
 
-app.delete("/books/:id", async (req, res) => {
+app.delete("/books/:id", authenticateToken, async (req, res) => {
     const { id } = req.params;
+
     try {
         await pool.query("DELETE FROM books WHERE id = $1", [id]);
         res.json({ message: "Book deleted successfully" });
@@ -194,4 +164,5 @@ app.delete("/books/:id", async (req, res) => {
     }
 });
 
+// Start the server
 app.listen(5000, () => console.log("Server running on port 5000"));
